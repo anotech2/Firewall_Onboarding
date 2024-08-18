@@ -21,4 +21,5 @@ In the dynamic landscape of large-scale IT infrastructures, the efficient and se
 By following these steps and leveraging the resources in this repository, you can bring agility and precision to your firewall deployment strategy, transforming your security operations.
 
 **Check the below link for step by step guidance.**
+
 https://medium.com/@ano.tech2/enhance-efficiency-in-palo-alto-firewall-onboarding-using-ansible-and-jenkins-automation-cd4ef49dd702
