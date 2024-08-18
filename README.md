@@ -1,4 +1,5 @@
-**Automated Palo Alto Firewall Deployment**
+#**Automated Palo Alto Firewall Deployment**
+
 This repository supports the automation of the build and release process for onboarding Palo Alto firewalls in large-scale infrastructures with minimal human intervention. The approach leverages DevOps practices to streamline the deployment process, allowing firewalls to be configured and deployed with just a few clicks, significantly reducing the need for manual configurations by Security Engineers.
 
 **Introduction**
