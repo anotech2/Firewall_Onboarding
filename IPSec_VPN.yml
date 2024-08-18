@@ -1,0 +1,104 @@
+- name: IPSec VPN Configuration for SITE-A
+  hosts: "firewall"
+  connection: local
+  gather_facts: false
+  
+  vars:
+    device:
+      ip_address: "{{ ip_address }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+
+    ansible_python_interpreter: /usr/bin/python3
+    interface_name_1: "ethernet1/1"
+    interface_name_2: "ethernet1/2"
+    interface_netmask: "24"
+    interface_netmask_32: "32"
+    zone_name_untrust: "UNTRUST"
+    zone_name_trust: "TRUST"
+    zone_name_vpn: "VPN"
+    management_profile: "Mgmt_Profile"
+
+    interface_ip_1: "20.20.100.2"
+    interface_ip_2: "192.168.100.1"
+
+    tunnel_interface: "tunnel.50"
+    local_ip_address: "172.16.1.50" #Tunnel Interface IP
+    remote_ip_address: "172.16.2.55" #Tunnel Interface IP
+
+    local_ip_address_subnet: "172.16.1.0" #Tunnel Interface IP
+    remote_ip_address_subnet: "172.16.2.0" #Tunnel Interface IP
+
+  collections:
+  - paloaltonetworks.panos
+
+  tasks:
+    #Create VPN Zone
+    - name: Add Zone VPN
+      paloaltonetworks.panos.panos_zone:
+        provider: "{{ device }}"
+        zone: "{{ zone_name_vpn }}"
+        mode: "layer3"
+
+    #Create Tunnel Interface
+    - name: Create Tunnel Interface
+      paloaltonetworks.panos.panos_tunnel:
+        provider: "{{ device }}"
+        state: present
+        if_name: "{{ tunnel_interface }}"
+        ip: "{{ local_ip_address }}/{{ interface_netmask }}"
+        vr_name: 'Virtual Router'
+        zone_name: "{{ zone_name_vpn }}"
+
+    #Create IKE Crypto Profile
+    - name: Add IKE crypto config to the firewall
+      panos_ike_crypto_profile:
+        provider: "{{ device }}"
+        state: 'present'
+        name: 'SITE-A-Gr20-SHA512-AES256'
+        dh_group: ['group20']
+        authentication: ['sha512']
+        encryption: ['aes-256-cbc']
+        lifetime_seconds: '28800'
+
+    #Configure IKE Gateways
+    - name: Add IKE gateway config to the firewall
+      panos_ike_gateway:
+        provider: "{{ device }}"
+        state: 'present'
+        name: 'SITE-A-IKEGateway'
+        version: 'ikev2'
+        interface: "{{ interface_name_1 }}"
+        enable_passive_mode: False
+        enable_liveness_check: True
+        liveness_check_interval: '5'
+        peer_ip_value: "{{ remote_ip_address }}/{{ interface_netmask_32 }}"
+        pre_shared_key: 'TestVPN'
+    
+    #Configure IPSec Crypto Profile
+    - name: Add IPSec crypto config to the firewall
+      panos_ipsec_profile:
+        provider: "{{ device }}"
+        state: 'present'
+        name: 'SITE-A-IPSec-Crypto'
+        esp_authentication: ['sha256']
+        esp_encryption: ['aes-256-cbc']
+        lifetime_days: '1'
+        dh_group: 'group20'
+
+    - name: Add IPSec Tunnel
+      panos_ipsec_tunnel:
+        provider: "{{ device }}"
+        name: 'SITE-A-IPSecTunnel'
+        tunnel_interface: "{{ tunnel_interface }}" 
+        ak_ike_gateway: 'SITE-A-IKEGateway'
+        ak_ipsec_crypto_profile: 'SITE-A-IPSec-Crypto'
+        state: 'present'
+
+    - name: Add IPSec IPv4 Proxy ID
+      panos_ipsec_ipv4_proxyid:
+        provider: "{{ device }}"
+        name: 'IPSec-Proxy'
+        tunnel_name: 'SITE-A-IPSecTunnel'
+        local: "{{ local_ip_address }}/{{ interface_netmask }}"
+        remote: "{{ remote_ip_address }}/{{ interface_netmask }}"

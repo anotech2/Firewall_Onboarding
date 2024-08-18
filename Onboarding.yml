@@ -1,0 +1,166 @@
+- name: Final Automation with NAT for Public SITE-A
+  hosts: "firewall"
+  connection: local
+  gather_facts: false
+  
+  vars:
+    device:
+      ip_address: "{{ ip_address }}"
+      username: "{{ username }}"
+      password: "{{ password }}"
+
+    ansible_python_interpreter: /usr/bin/python3
+    interface_name_1: "ethernet1/1"
+    interface_name_2: "ethernet1/2"
+    interface_netmask: "24"
+    zone_name_untrust: "UNTRUST"
+    zone_name_trust: "TRUST"
+    management_profile: "Mgmt_Profile"
+
+    interface_ip_1: "20.20.100.2"   #Variable
+    interface_ip_2: "192.168.100.1" #Variable
+
+    interface_ip_nextHop_1: "20.20.100.1"   #Variable
+    interface_ip_nextHop_2: "192.168.100.2" #Variable
+
+  collections:
+  - paloaltonetworks.panos
+
+  tasks:
+    #ADD Zones
+    - name: Add Zone Untrust
+      paloaltonetworks.panos.panos_zone:
+        provider: "{{ device }}"
+        zone: "{{ zone_name_untrust }}"
+        mode: "layer3"
+
+    - name: Add Zone Trust
+      paloaltonetworks.panos.panos_zone:
+        provider: "{{ device }}"
+        zone: "{{ zone_name_trust }}"
+        mode: "layer3"
+    
+    #ADD Management Profile
+    - name: Add Management Profile
+      paloaltonetworks.panos.panos_management_profile:
+        provider: "{{ device }}"
+        name: "{{ management_profile }}"
+        ping: True
+        ssh: True
+        https: True
+
+    #ADD Virtual Router
+    - name: Create Virtual Router
+      panos_virtual_router:
+        provider: '{{ device }}'
+        name: 'Virtual Router'
+      
+    #ADD Interfaces
+    - name: Add Interface LAN
+      paloaltonetworks.panos.panos_interface:
+        provider: "{{ device }}"
+        if_name: "{{ interface_name_2 }}"
+        mode: "layer3"
+        ip: "{{ interface_ip_2 }}/{{ interface_netmask }}"
+        zone_name: "{{ zone_name_trust }}"
+        enable_dhcp: false
+        vr_name: 'Virtual Router'
+        management_profile: "{{ management_profile }}"
+
+    - name: Add Interface WAN
+      paloaltonetworks.panos.panos_interface:
+        provider: "{{ device }}"
+        if_name: "{{ interface_name_1 }}"
+        mode: "layer3"
+        ip: "{{ interface_ip_1 }}/{{ interface_netmask }}"
+        zone_name: "{{ zone_name_untrust }}"
+        enable_dhcp: false
+        vr_name: 'Virtual Router'
+        management_profile: "{{ management_profile }}"
+
+    #ADD Static Route
+    - name: Create Static route - Outside
+      panos_static_route:
+        provider: '{{ device }}'
+        virtual_router: 'Virtual Router'
+        name: 'To Outside'
+        destination: '0.0.0.0/0'
+        interface: "{{ interface_name_1 }}"
+        nexthop: '20.20.100.1'    #Variavle
+
+    - name: Create Static route - Inside
+      panos_static_route:
+        provider: '{{ device }}'
+        virtual_router: 'Virtual Router'
+        name: 'To LAN'
+        destination: '192.168.0.0/16'
+        interface: "{{ interface_name_2 }}"
+        nexthop: '192.168.100.2'    #Variable
+
+    #ADD Security Rule
+    - name: Allow Internet Policy
+      paloaltonetworks.panos.panos_security_rule:
+        provider: "{{ device }}"
+        rule_name: "Internet Access"
+        source_zone: ["any"]
+        source_ip: ["any"]
+        destination_zone: ["any"]
+        destination_ip: ["any"]
+        application: ["any"]
+        service: ["application-default"]
+        action: "allow"
+
+    - name: Copy Python script to the remote host
+      copy:
+        content: |
+          import sys
+          import ipaddress
+
+          def is_private_ip(ip):
+              try:
+                  ip_obj = ipaddress.ip_address(ip)
+                  return ip_obj.is_private
+              except ValueError:
+                  return False
+
+          if __name__ == "__main__":
+              ip = sys.argv[1]
+              if is_private_ip(ip):
+                  print("private")
+              else:
+                  print("public")
+        dest: /tmp/check_ip.py
+        mode: '0755'
+
+    - name: Run the Python script to check IP type
+      command: python3 /tmp/check_ip.py {{ interface_ip_1 }}
+      register: ip_check_result
+
+    - name: Debug IP check result
+      debug:
+        msg: "The IP address {{ interface_ip_1 }} is {{ ip_check_result.stdout }}."
+
+    - name: Configure NAT if IP is public No NAT Added
+      when: ip_check_result.stdout == "public"
+      block:
+        #ADD NAT
+        - name: Create Source NAT
+          paloaltonetworks.panos.panos_nat_rule2:
+            provider: "{{ device }}"
+            name: 'Trust_to_Untrust'   
+            state: 'present'
+            nat_type: 'ipv4'
+            from_zones: "{{ zone_name_trust }}"
+            to_zones: "{{ zone_name_untrust }}"
+            to_interface: "{{ interface_name_1 }}"
+            service: 'any'
+            source_addresses: ['any']
+            destination_addresses: ['any']
+            source_translation_type: 'dynamic-ip-and-port'
+            source_translation_address_type: 'interface-address'
+            source_translation_interface: "{{ interface_name_1 }}"
+            source_translation_ip_address: "{{ interface_ip_1 }}/{{ interface_netmask }}"
+
+    - name: commit candidate config on firewall
+      panos_commit:
+        provider: '{{ device }}'
